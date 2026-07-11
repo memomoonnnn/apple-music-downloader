@@ -8,8 +8,13 @@
 !/go.mod
 !/go.sum
 !/main.go
+!*_test.go
 !/README.md
+!/AGENTS.md
+!/script/
+!/script/**
 !/utils/
 !/utils/**
 !/cmd/
 !/cmd/**
+*.DS_Store
