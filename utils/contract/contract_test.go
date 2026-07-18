@@ -82,6 +82,11 @@ func TestConfigExampleKeepsGetOudioCompatibleFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config.yaml.example: %v", err)
 	}
+	for _, field := range []string{"convert-after-download:", "convert-format:", "ffmpeg-path:"} {
+		if strings.Contains(string(data), field) {
+			t.Fatalf("removed conversion field %q is still documented", field)
+		}
+	}
 	var config structs.ConfigSet
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		t.Fatalf("unmarshal config.yaml.example: %v", err)

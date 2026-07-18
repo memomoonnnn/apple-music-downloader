@@ -16,9 +16,9 @@ Get Oudio 当前只通过 `AppleMusicDownloadService.downloaderArguments` 调用
 
 ## Development Direction
 
-优先级最高的是保持行为稳定。小改动应先围绕构建、日志、错误信息、可测试性和 Get Oudio 实际调用路径做，不要先大规模重排上游结构。当前 fork 已移除 `--search`、`--select`、`--all-album`、`--debug` 及其 survey、表格、终端颜色和 artist 交互实现；专辑与播放列表固定遍历全部曲目，M3U8 解析只保留下载所需的质量选择。上游同步若重新引入这些路径，不要无意恢复它们。
+优先级最高的是保持行为稳定。小改动应先围绕构建、日志、错误信息、可测试性和 Get Oudio 实际调用路径做，不要先大规模重排上游结构。当前 fork 已移除 `--search`、`--select`、`--all-album`、`--debug` 及其 survey、表格、终端颜色和 artist 交互实现，也移除了下载后格式转换；专辑与播放列表固定遍历全部曲目，M3U8 解析只保留下载所需的质量选择。上游同步若重新引入这些路径，不要无意恢复它们。
 
-候选裁剪区按风险从低到高评估：交互搜索与选择 UI、表格输出和终端颜色通常最容易与 Get Oudio 解耦；MV 下载、Widevine/protobuf、`mp4decrypt`、歌词、MP4 tag、封面写入、`alacfix`、下载后转换和 runv2/runv3 解密路径必须先确认 Get Oudio 产品面是否真的不用，且要有替代测试或真实下载验证。尤其不要破坏 `--aac`、`--atmos`、`--song`、默认 ALAC、`config.yaml` 字段、进度输出和失败信息格式，因为 Get Oudio 会解析这些行为并向用户展示。
+候选裁剪区按风险从低到高评估：交互搜索与选择 UI、表格输出和终端颜色通常最容易与 Get Oudio 解耦；MV 下载、Widevine/protobuf、`mp4decrypt`、歌词、MP4 tag、封面写入、`alacfix` 和 runv2/runv3 解密路径必须先确认 Get Oudio 产品面是否真的不用，且要有替代测试或真实下载验证。尤其不要破坏 `--aac`、`--atmos`、`--song`、默认 ALAC、`config.yaml` 字段、进度输出和失败信息格式，因为 Get Oudio 会解析这些行为并向用户展示。
 
 ## Build And Sync
 
