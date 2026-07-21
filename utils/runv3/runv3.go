@@ -9,6 +9,7 @@ import (
 	"github.com/go-resty/resty/v2"
 	"google.golang.org/protobuf/proto"
 
+	"main/utils/events"
 	cdm "main/utils/runv3/cdm"
 	key "main/utils/runv3/key"
 	"os"
@@ -250,7 +251,7 @@ func extsong(b string) bytes.Buffer {
 			BarEnd:        "",
 		}),
 	)
-	io.Copy(io.MultiWriter(&buffer, bar), resp.Body)
+	io.Copy(io.MultiWriter(&buffer, bar, events.NewProgressWriter("downloading", resp.ContentLength)), resp.Body)
 	return buffer
 }
 func Run(adamId string, trackpath string, authtoken string, mutoken string, mvmode bool, serverUrl string) (string, error) {
@@ -315,11 +316,13 @@ func Run(adamId string, trackpath string, authtoken string, mutoken string, mvmo
 	//bodyReader := bytes.NewReader(body)
 	var buffer bytes.Buffer
 
+	events.BeginProgress("decrypting", int64(body.Len()))
 	err = DecryptMP4(&body, keybt, &buffer)
 	if err != nil {
 		fmt.Print("Decryption failed\n")
 		return "", err
 	} else {
+		events.UpdateProgress(int64(body.Len()))
 		fmt.Print("Decrypted\n")
 	}
 	// create output file
@@ -450,7 +453,7 @@ func ExtMvData(keyAndUrls string, savePath string) error {
 
 	// 初始化进度条
 	bar := progressbar.DefaultBytes(-1, "Downloading...")
-	barWriter := io.MultiWriter(tempFile, bar)
+	barWriter := io.MultiWriter(tempFile, bar, events.NewProgressWriter("downloading", -1))
 
 	// 启动写入 Goroutine
 	writerWg.Add(1)
@@ -483,6 +486,7 @@ func ExtMvData(keyAndUrls string, savePath string) error {
 		return err
 	}
 	fmt.Println("\nDownloaded.")
+	events.BeginProgress("decrypting", 0)
 
 	cmd1 := exec.Command("mp4decrypt", "--key", key, tempFile.Name(), filepath.Base(savePath))
 	cmd1.Dir = filepath.Dir(savePath) //设置mp4decrypt的工作目录以解决中文路径错误

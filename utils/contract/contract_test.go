@@ -20,7 +20,7 @@ func TestParseDownloaderOptionsKeepsGetOudioArguments(t *testing.T) {
 		MVMax:       2160,
 	}
 
-	opts, err := ParseDownloaderOptions([]string{"--aac", "--song", "https://music.apple.com/us/song/name/12345"}, config)
+	opts, err := ParseDownloaderOptions([]string{"--aac", "--song", "--events=jsonl", "https://music.apple.com/us/song/name/12345"}, config)
 	if err != nil {
 		t.Fatalf("ParseDownloaderOptions returned error: %v", err)
 	}
@@ -29,6 +29,9 @@ func TestParseDownloaderOptionsKeepsGetOudioArguments(t *testing.T) {
 	}
 	if opts.AACType != "aac-lc" || opts.AlacMax != 192000 || opts.AtmosMax != 2768 {
 		t.Fatalf("config-backed defaults changed: %+v", opts)
+	}
+	if opts.EventsFormat != "jsonl" {
+		t.Fatalf("events format changed: %q", opts.EventsFormat)
 	}
 	if got := strings.Join(opts.PositionalArgs, " "); got != "https://music.apple.com/us/song/name/12345" {
 		t.Fatalf("unexpected positional args: %q", got)

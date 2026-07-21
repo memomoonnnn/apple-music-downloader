@@ -14,13 +14,16 @@ import (
 	"os"
 	"time"
 
+	"main/utils/events"
 	"main/utils/structs"
 
 	"github.com/grafov/m3u8"
 	"github.com/itouakirai/mp4ff/mp4"
 	"github.com/schollz/progressbar/v3"
 )
+
 const prefetchKey = "skd://itunes.apple.com/P000000000/s1/e1"
+
 var ErrTimeout = errors.New("response timed out")
 
 type TimedResponseBody struct {
@@ -41,7 +44,6 @@ func (b *TimedResponseBody) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
-
 
 func Run(adamId string, playlistUrl string, outfile string, Config structs.ConfigSet) error {
 	var err error
@@ -117,7 +119,7 @@ func Run(adamId string, playlistUrl string, outfile string, Config structs.Confi
 			return err
 		}
 		defer do.Body.Close()
-		if do.ContentLength < int64(Config.MaxMemoryLimit * 1024 * 1024) {
+		if do.ContentLength < int64(Config.MaxMemoryLimit*1024*1024) {
 			var buffer bytes.Buffer
 			bar := progressbar.NewOptions64(
 				do.ContentLength,
@@ -137,11 +139,11 @@ func Run(adamId string, playlistUrl string, outfile string, Config structs.Confi
 					BarEnd:        "",
 				}),
 			)
-			io.Copy(io.MultiWriter(&buffer, bar), do.Body)
+			io.Copy(io.MultiWriter(&buffer, bar, events.NewProgressWriter("downloading", do.ContentLength)), do.Body)
 			body = &buffer
 			fmt.Print("Downloaded\n")
 		} else {
-			body = do.Body
+			body = io.TeeReader(do.Body, events.NewProgressWriter("downloading", do.ContentLength))
 		}
 	}
 
@@ -223,6 +225,8 @@ func downloadAndDecryptFile(conn io.ReadWriter, in io.Reader, outfile string,
 		}),
 	)
 	bar.Add64(int64(offset))
+	events.BeginProgress("decrypting", totalLen)
+	events.UpdateProgress(int64(offset))
 	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 	for i := 0; ; i++ {
 		var frag *mp4.Fragment
@@ -267,6 +271,7 @@ func downloadAndDecryptFile(conn io.ReadWriter, in io.Reader, outfile string,
 			return err
 		}
 		bar.Add64(int64(rawoffset))
+		events.UpdateProgress(int64(offset))
 	}
 	err = outBuf.Flush()
 	if err != nil {
@@ -362,7 +367,7 @@ func parseMediaPlaylist(r io.ReadCloser) ([]*m3u8.MediaSegment, error) {
 	return mediaPlaylist.Segments, nil
 }
 
-//pasing
+// pasing
 func ReadInitSegment(r io.Reader) (*mp4.InitSegment, uint64, error) {
 	var offset uint64 = 0
 	init := mp4.NewMP4Init()
@@ -453,7 +458,8 @@ func TransformInit(init *mp4.InitSegment) (map[uint32]mp4.DecryptTrackInfo, erro
 	}
 	return tracks, nil
 }
-//remote
+
+// remote
 // Reset the loops on the script's end and close the connection
 func Close(conn io.WriteCloser) error {
 	defer conn.Close()
@@ -475,8 +481,6 @@ func SendString(conn io.Writer, uri string) error {
 	_, err = io.WriteString(conn, uri)
 	return err
 }
-
-
 
 func cbcsFullSubsampleDecrypt(data []byte, conn *bufio.ReadWriter) error {
 	// Drops 4 last bits -> multiple of 16

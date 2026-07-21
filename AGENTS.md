@@ -8,6 +8,10 @@ Get Oudio 不把本仓库源码 vendoring 到 App 工程里，只消费构建后
 
 Get Oudio 当前只通过 `AppleMusicDownloadService.downloaderArguments` 调用本工具：ALAC 使用默认空参数，AAC 使用 `--aac`，Atmos 使用 `--atmos`，单曲 URL 追加 `--song`。它不调用 `--search`、`--select`、`--all-album` 或交互式 artist 选择；但运行时仍依赖 `config.yaml` 的兼容性、退出码、stdout/stderr 进度文本、下载完成行为、歌词/tag/封面相关默认行为和 runv2/runv3 解密链路。不要为了缩小体积无声移除这些兼容面。
 
+## Structured Event Mode
+
+Get Oudio 调用时追加 `--events=jsonl`，此模式的 stdout 是唯一的机器接口：UTF-8 JSONL、每行一个 schema version 1 事件，不得混入终端文本、进度条或 ANSI 控制字符。旧的 stdout 文本在该模式下丢弃，默认模式保持原样。事件至少覆盖 `run_started`、`item_started`、`progress`、`item_completed`、`item_failed`、`diagnostic` 和 `run_completed`；每个事件有单调 `sequence` 与 `run_id`。`item_started.data.content.playlist_title` 仅在播放列表曲目时携带播放列表名称。下载、解密和 tag 阶段只由 30 秒心跳发送最新字节数，不在阶段开始时立即发送；总字节数未知时不要伪造百分比。只有目标文件、封装和 tag 均完成后才能发送 `item_completed`，失败事件与 diagnostic 必须先做凭据脱敏。
+
 ## Size Research
 
 此前对 Get Oudio 内嵌二进制的调查结论是：18 MB 体积不是因为把全部 Go module 源码或第三方 dylib 原样打包，而是因为 Go 单文件可执行会携带 Go runtime、可达依赖代码、类型/反射元数据、符号表和 DWARF 调试信息；`otool -L` 只显示 macOS 系统库依赖。低风险优化是链接期剥离：同一上游提交上，普通 `go build -trimpath` 产物约 `18,445,362` 字节，`go build -trimpath -ldflags="-s -w"` 产物约 `12,753,922` 字节，节省约 31%。`strip` 作为后处理效果明显更弱，不应作为主要瘦身方式。

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,6 +21,7 @@ import (
 	"main/utils/alacfix"
 	"main/utils/ampapi"
 	"main/utils/contract"
+	"main/utils/events"
 	"main/utils/lyrics"
 	"main/utils/runv2"
 	"main/utils/runv3"
@@ -41,6 +41,7 @@ var (
 	dl_aac             bool
 	dl_song            bool
 	print_json         bool
+	events_format      string
 	save_m3u8_playlist bool
 	alac_max           *int
 	atmos_max          *int
@@ -268,30 +269,56 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+func failTrack(track *task.Track, code string, err error) {
+	events.ItemFailed(track.ID, code, err)
+}
+
 func ripTrack(track *task.Track, token string, mediaUserToken string) {
 	var err error
 	counter.Total++
 	fmt.Printf("Track %d of %d: %s\n", track.TaskNum, track.TaskTotal, track.Type)
+	playlistTitle := ""
+	if track.PreType == "playlists" {
+		playlistTitle = track.PlaylistData.Attributes.Name
+	}
+	events.ItemStarted(events.Content{
+		ID:            track.ID,
+		Kind:          track.Type,
+		Title:         track.Resp.Attributes.Name,
+		Artist:        track.Resp.Attributes.ArtistName,
+		Album:         track.Resp.Attributes.AlbumName,
+		PlaylistTitle: playlistTitle,
+		Position:      track.TaskNum,
+		Total:         track.TaskTotal,
+	})
 
 	//mv dl dev
 	if track.Type == "music-videos" {
 		if len(mediaUserToken) <= 50 {
 			fmt.Println("meida-user-token is not set, skip MV dl")
+			failTrack(track, "authentication_required", errors.New("media-user-token is not set"))
 			counter.Success++
 			return
 		}
 		if _, err := exec.LookPath("mp4decrypt"); err != nil {
 			fmt.Println("mp4decrypt is not found, skip MV dl")
+			failTrack(track, "dependency_missing", err)
 			counter.Success++
 			return
 		}
 		err := mvDownloader(track.ID, track.SaveDir, token, track.Storefront, mediaUserToken, track)
 		if err != nil {
 			fmt.Println("\u26A0 Failed to dl MV:", err)
+			failTrack(track, "download_failed", err)
 			counter.Error++
 			return
 		}
 		counter.Success++
+		outputPath := ""
+		if len(AddedTracks) > 0 {
+			outputPath = AddedTracks[len(AddedTracks)-1].Path
+		}
+		events.ItemCompleted(track.ID, outputPath)
 		return
 	}
 
@@ -302,6 +329,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 	if track.WebM3u8 == "" && !needDlAacLc {
 		if dl_atmos {
 			fmt.Println("Unavailable")
+			failTrack(track, "source_unavailable", errors.New("lossless source unavailable"))
 			counter.Unavailable++
 			return
 		}
@@ -333,6 +361,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 			_, Quality, err = extractMedia(track.M3u8, true)
 			if err != nil {
 				fmt.Println("Failed to extract quality from manifest.\n", err)
+				failTrack(track, "manifest_failed", err)
 				counter.Error++
 				return
 			}
@@ -395,6 +424,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 			Album:    track.Resp.Attributes.AlbumName,
 			Song:     track.Resp.Attributes.Name,
 		})
+		events.ItemCompleted(track.ID, trackPath)
 		return
 	}
 	//提前获取到的播放列表下track所在的专辑信息
@@ -424,12 +454,14 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 	if needDlAacLc {
 		if len(mediaUserToken) <= 50 {
 			fmt.Println("Invalid media-user-token")
+			failTrack(track, "authentication_required", errors.New("invalid media-user-token"))
 			counter.Error++
 			return
 		}
 		_, err := runv3.Run(track.ID, trackPath, token, mediaUserToken, false, "")
 		if err != nil {
 			fmt.Println("Failed to dl aac-lc:", err)
+			failTrack(track, "download_failed", err)
 			if err.Error() == "Unavailable" {
 				counter.Unavailable++
 				return
@@ -441,6 +473,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 		trackM3u8Url, _, err := extractMedia(track.M3u8, false)
 		if err != nil {
 			fmt.Println("\u26A0 Failed to extract info from manifest:", err)
+			failTrack(track, "manifest_failed", err)
 			counter.Unavailable++
 			return
 		}
@@ -448,11 +481,13 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 		err = runv2.Run(track.ID, trackM3u8Url, trackPath, Config)
 		if err != nil {
 			fmt.Println("Failed to run v2:", err)
+			failTrack(track, "download_failed", err)
 			counter.Error++
 			return
 		}
 	}
 	//这里利用MP4box将fmp4转化为mp4，并添加ilst box与cover，方便后面的mp4tag添加更多自定义标签
+	events.BeginProgress("tagging", 0)
 	tags := []string{
 		"tool=",
 		"artist=AppleMusic",
@@ -470,12 +505,14 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 	cmd := exec.Command("MP4Box", "-itags", tagsString, trackPath)
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("Embed failed: %v\n", err)
+		failTrack(track, "tag_write_failed", err)
 		counter.Error++
 		return
 	}
 	if (strings.Contains(track.PreID, "pl.") || strings.Contains(track.PreID, "ra.")) && Config.DlAlbumcoverForPlaylist {
 		if err := os.Remove(track.CoverPath); err != nil {
 			fmt.Printf("Error deleting file: %s\n", track.CoverPath)
+			failTrack(track, "output_cleanup_failed", err)
 			counter.Error++
 			return
 		}
@@ -486,6 +523,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 		err = alacfix.Run(track.SavePath, false)
 		if err != nil {
 			fmt.Println("\u26A0 Failed to fix ALAC:", err)
+			failTrack(track, "media_fix_failed", err)
 			counter.Unavailable++
 			return
 		}
@@ -494,6 +532,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 	err = writeMP4Tags(track, lrc)
 	if err != nil {
 		fmt.Println("\u26A0 Failed to write tags in media:", err)
+		failTrack(track, "tag_write_failed", err)
 		counter.Unavailable++
 		return
 	}
@@ -512,6 +551,7 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 
 	counter.Success++
 	okDict[track.PreID] = append(okDict[track.PreID], track.TaskNum)
+	events.ItemCompleted(track.ID, track.SavePath)
 }
 
 func ripStation(albumId string, token string, storefront string, mediaUserToken string) error {
@@ -1272,19 +1312,11 @@ func main() {
 		fmt.Printf("load Config failed: %v", err)
 		return
 	}
-	token, err := ampapi.GetToken()
-	if err != nil {
-		if Config.AuthorizationToken != "" && Config.AuthorizationToken != "your-authorization-token" {
-			token = strings.Replace(Config.AuthorizationToken, "Bearer ", "", -1)
-		} else {
-			fmt.Println("Failed to get token.")
-			return
-		}
-	}
 	pflag.BoolVar(&dl_atmos, "atmos", false, "Enable atmos download mode")
 	pflag.BoolVar(&dl_aac, "aac", false, "Enable adm-aac download mode")
 	pflag.BoolVar(&dl_song, "song", false, "Enable single song download mode")
 	pflag.BoolVar(&print_json, "json", false, "Output JSON summary at the end")
+	pflag.StringVar(&events_format, "events", "", "Output Get Oudio events (jsonl)")
 	pflag.BoolVar(&save_m3u8_playlist, "save-m3u8-playlist", false, "Save M3U8 playlist file")
 	alac_max = pflag.Int("alac-max", Config.AlacMax, "Specify the max quality for download alac")
 	atmos_max = pflag.Int("atmos-max", Config.AtmosMax, "Specify the max quality for download atmos")
@@ -1306,11 +1338,37 @@ func main() {
 	Config.MVMax = *mv_max
 
 	args := pflag.Args()
+	if events_format != "" && events_format != "jsonl" {
+		fmt.Println("Unsupported events format:", events_format)
+		return
+	}
+	if events_format == "jsonl" {
+		events.EnableJSONL()
+		defer events.Close()
+	}
 
 	if len(args) == 0 {
 		fmt.Println("No URLs provided. Please provide at least one URL.")
 		pflag.Usage()
 		return
+	}
+	format := "alac"
+	if dl_aac {
+		format = "aac"
+	} else if dl_atmos {
+		format = "atmos"
+	}
+	events.RunStarted(args, format)
+	token, err := ampapi.GetToken()
+	if err != nil {
+		if Config.AuthorizationToken != "" && Config.AuthorizationToken != "your-authorization-token" {
+			token = strings.Replace(Config.AuthorizationToken, "Bearer ", "", -1)
+		} else {
+			fmt.Println("Failed to get token.")
+			events.Diagnostic("error", "token_unavailable", "failed to get token")
+			events.RunCompleted("failed", 0, 0, 1)
+			return
+		}
 	}
 	os.Args = args
 	albumTotal := len(os.Args)
@@ -1363,12 +1421,16 @@ func main() {
 				err := ripSong(songId, token, storefront, Config.MediaUserToken)
 				if err != nil {
 					fmt.Println("Failed to rip song:", err)
+					counter.Error++
 				}
 				continue
 			}
 			parse, err := url.Parse(urlRaw)
 			if err != nil {
-				log.Fatalf("Invalid URL: %v", err)
+				fmt.Println("Invalid URL:", err)
+				events.Diagnostic("error", "invalid_url", err.Error())
+				counter.Error++
+				continue
 			}
 			var urlArg_i = parse.Query().Get("i")
 
@@ -1406,6 +1468,8 @@ func main() {
 			break
 		} else if contract.ShouldExitAfterErrors(counter.Error, Config.ExitOnError) {
 			fmt.Println("Error detected, exiting...")
+			events.RunCompleted("failed", counter.Success, counter.Unavailable+counter.NotSong, counter.Error)
+			events.Close()
 			os.Exit(1)
 		} else {
 			fmt.Println("Error detected, press Enter to try again...")
@@ -1415,6 +1479,14 @@ func main() {
 
 		counter = structs.Counter{}
 	}
+
+	status := "completed"
+	if counter.Error > 0 {
+		status = "failed"
+	} else if counter.Unavailable+counter.NotSong > 0 {
+		status = "partial"
+	}
+	events.RunCompleted(status, counter.Success, counter.Unavailable+counter.NotSong, counter.Error)
 
 	// Print JSON output
 	if print_json {

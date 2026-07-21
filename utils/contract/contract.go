@@ -35,6 +35,7 @@ type DownloaderOptions struct {
 	AAC            bool
 	Song           bool
 	PrintJSON      bool
+	EventsFormat   string
 	SaveM3U8       bool
 	AlacMax        int
 	AtmosMax       int
@@ -52,6 +53,7 @@ func ParseDownloaderOptions(args []string, config structs.ConfigSet) (Downloader
 	flags.BoolVar(&opts.AAC, "aac", false, "Enable adm-aac download mode")
 	flags.BoolVar(&opts.Song, "song", false, "Enable single song download mode")
 	flags.BoolVar(&opts.PrintJSON, "json", false, "Output JSON summary at the end")
+	flags.StringVar(&opts.EventsFormat, "events", "", "Output Get Oudio events (jsonl)")
 	flags.BoolVar(&opts.SaveM3U8, "save-m3u8-playlist", false, "Save M3U8 playlist file")
 	flags.IntVar(&opts.AlacMax, "alac-max", config.AlacMax, "Specify the max quality for download alac")
 	flags.IntVar(&opts.AtmosMax, "atmos-max", config.AtmosMax, "Specify the max quality for download atmos")
