@@ -38,5 +38,6 @@ require (
 	github.com/go-resty/resty/v2 v2.16.5
 	github.com/itouakirai/mp4ff v0.0.0-20250930132656-98812935a1c7
 	github.com/zhaarey/go-mp4tag v0.0.0-20260509131819-a89fa417cd97
+	golang.org/x/sync v0.12.0
 	gopkg.in/yaml.v2 v2.2.8
 )

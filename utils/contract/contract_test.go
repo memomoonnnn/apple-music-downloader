@@ -94,8 +94,11 @@ func TestConfigExampleKeepsGetOudioCompatibleFields(t *testing.T) {
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		t.Fatalf("unmarshal config.yaml.example: %v", err)
 	}
-	if config.DecryptM3u8Port != "127.0.0.1:10020" || config.GetM3u8Port != "127.0.0.1:20020" {
+	if config.DecryptM3u8Port != "127.0.0.1:10020" || config.GetM3u8Port != "127.0.0.1:20020" || config.KeyServer != "127.0.0.1:40020" {
 		t.Fatalf("wrapper port defaults changed: decrypt=%q get=%q", config.DecryptM3u8Port, config.GetM3u8Port)
+	}
+	if config.TemplateDecrypt {
+		t.Fatal("standalone config must retain runv2 as its default decryptor")
 	}
 	if config.AlacSaveFolder == "" || config.AacSaveFolder == "" || config.AtmosSaveFolder == "" {
 		t.Fatalf("download folders must remain configured: %+v", config)
@@ -120,5 +123,14 @@ func TestExitAndRedactionContracts(t *testing.T) {
 		if strings.Contains(redacted, secret) {
 			t.Fatalf("secret %q was not redacted from %q", secret, redacted)
 		}
+	}
+}
+
+func TestTemplateDecryptContractFollowsConfiguration(t *testing.T) {
+	if ShouldUseTemplateDecrypt(structs.ConfigSet{}) {
+		t.Fatal("template decrypt must remain opt-in")
+	}
+	if !ShouldUseTemplateDecrypt(structs.ConfigSet{TemplateDecrypt: true}) {
+		t.Fatal("template decrypt must be selected when explicitly enabled")
 	}
 }

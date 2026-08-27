@@ -111,6 +111,10 @@ func ShouldExitAfterErrors(errorCount int, exitOnError bool) bool {
 	return errorCount > 0 && exitOnError
 }
 
+func ShouldUseTemplateDecrypt(config structs.ConfigSet) bool {
+	return config.TemplateDecrypt
+}
+
 func RedactSensitiveText(input string) string {
 	if input == "" {
 		return input

@@ -29,6 +29,8 @@ type ConfigSet struct {
 	CleanChoice             string `yaml:"clean-choice"`
 	AppleMasterChoice       string `yaml:"apple-master-choice"`
 	MaxMemoryLimit          int    `yaml:"max-memory-limit"`
+	TemplateDecrypt         bool   `yaml:"template-decrypt"`
+	KeyServer               string `yaml:"key-server"`
 	DecryptM3u8Port         string `yaml:"decrypt-m3u8-port"`
 	GetM3u8Port             string `yaml:"get-m3u8-port"`
 	GetM3u8Mode             string `yaml:"get-m3u8-mode"`

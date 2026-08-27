@@ -25,6 +25,7 @@ import (
 	"main/utils/lyrics"
 	"main/utils/runv2"
 	"main/utils/runv3"
+	"main/utils/runv4"
 	"main/utils/structs"
 	"main/utils/task"
 
@@ -477,10 +478,13 @@ func ripTrack(track *task.Track, token string, mediaUserToken string) {
 			counter.Unavailable++
 			return
 		}
-		//边下载边解密
-		err = runv2.Run(track.ID, trackM3u8Url, trackPath, Config)
+		if contract.ShouldUseTemplateDecrypt(Config) {
+			err = runv4.Run(track.ID, trackM3u8Url, trackPath, Config)
+		} else {
+			err = runv2.Run(track.ID, trackM3u8Url, trackPath, Config)
+		}
 		if err != nil {
-			fmt.Println("Failed to run v2:", err)
+			fmt.Println("Failed to decrypt track:", err)
 			failTrack(track, "download_failed", err)
 			counter.Error++
 			return

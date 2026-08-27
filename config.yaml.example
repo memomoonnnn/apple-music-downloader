@@ -18,6 +18,8 @@ atmos-save-folder: AM-DL-Atmos downloads
 aac-save-folder: AM-DL-AAC downloads
 mv-save-folder: AM-DL-MV downloads
 max-memory-limit: 256 # MB
+template-decrypt: false # Use the local template-decrypt path when a compatible 40020 key server is available
+key-server: "127.0.0.1:40020"
 decrypt-m3u8-port: "127.0.0.1:10020"
 get-m3u8-port: "127.0.0.1:20020"
 get-m3u8-from-device: true
