@@ -6,7 +6,15 @@
 
 Get Oudio 不把本仓库源码 vendoring 到 App 工程里，只消费构建后的 macOS 可执行文件。默认本地布局是 Get Oudio 与本仓库并列：`/Users/shengjiacheng/Desktop/项目/Software/get-oudio` 和 `/Users/shengjiacheng/Desktop/项目/Software/apple-music-downloader-get-oudio`。Get Oudio 端的同步入口是 `get-oudio/script/build_apple_music_downloader.sh`，它从本仓库当前工作树构建 `darwin/arm64`、`CGO_ENABLED=0`、`go build -trimpath -ldflags="-s -w"` 产物，并复制到 `GetOudio/Resources/ThirdParty/apple-music-downloader/apple-music-downloader`。
 
-Get Oudio 当前只通过 `AppleMusicDownloadService.downloaderArguments` 调用本工具：ALAC 使用默认空参数，AAC 使用 `--aac`，Atmos 使用 `--atmos`，单曲 URL 追加 `--song`。它不调用 `--search`、`--select`、`--all-album` 或交互式 artist 选择；但运行时仍依赖 `config.yaml` 的兼容性、退出码、stdout/stderr 进度文本、下载完成行为、歌词/tag/封面相关默认行为和 runv2/runv3 解密链路。不要为了缩小体积无声移除这些兼容面。
+Get Oudio 当前只通过 `AppleMusicDownloadService.downloaderArguments` 调用本工具：ALAC 使用默认空参数，AAC 使用 `--aac`，Atmos 使用 `--atmos`，单曲 URL 追加 `--song`。它不调用 `--search`、`--select`、`--all-album` 或交互式 artist 选择；但运行时仍依赖 `config.yaml` 的兼容性、退出码、stdout/stderr 进度文本、下载完成行为、歌词/tag/封面相关默认行为和 runv2/runv3/runv4 解密链路。不要为了缩小体积无声移除这些兼容面。
+
+## Template Decryption
+
+`template-decrypt` 是选择性路径：独立使用的 `config.yaml.example` 必须保持 `false`；Get Oudio 仅在匹配的 Runtime 组件版本中，以 `key-server: "127.0.0.1:40020"` 显式启用。`main.go` 只能经 `contract.ShouldUseTemplateDecrypt` 选择 `runv4.Run`，关闭时必须回退 `runv2.Run`；AAC-LC、MV、runv3、tag 和封装维持既有路径。
+
+runv4 从受控 wrapper 的 40020 服务获取模板并在本地解密。wrapper、渲染后的配置和内嵌下载器是同一发布组合；启用前确认 10020/20020/30020/40020 均已映射，且 40020 HTTP 服务对缺少参数返回预期的校验失败。不得记录模板、内容密钥、context、state、寄存器或任何凭据；`fetchTemplate` 必须在索引前拒绝短于 `0x2004` 字节的 `state` 响应。
+
+结构化事件启用时，runv4 的下载和解密字节进度必须通过 `events.NewProgressWriter` 与 `events.UpdateProgress` 接入，终端输出不得进入 stdout；现有 30 秒 JSONL 心跳仍是唯一进度接口。
 
 ## Structured Event Mode
 
@@ -22,7 +30,7 @@ Get Oudio 调用时追加 `--events=jsonl`，此模式的 stdout 是唯一的机
 
 优先级最高的是保持行为稳定。小改动应先围绕构建、日志、错误信息、可测试性和 Get Oudio 实际调用路径做，不要先大规模重排上游结构。当前 fork 已移除 `--search`、`--select`、`--all-album`、`--debug` 及其 survey、表格、终端颜色和 artist 交互实现，也移除了下载后格式转换；专辑与播放列表固定遍历全部曲目，M3U8 解析只保留下载所需的质量选择。上游同步若重新引入这些路径，不要无意恢复它们。
 
-候选裁剪区按风险从低到高评估：交互搜索与选择 UI、表格输出和终端颜色通常最容易与 Get Oudio 解耦；MV 下载、Widevine/protobuf、`mp4decrypt`、歌词、MP4 tag、封面写入、`alacfix` 和 runv2/runv3 解密路径必须先确认 Get Oudio 产品面是否真的不用，且要有替代测试或真实下载验证。尤其不要破坏 `--aac`、`--atmos`、`--song`、默认 ALAC、`config.yaml` 字段、进度输出和失败信息格式，因为 Get Oudio 会解析这些行为并向用户展示。
+候选裁剪区按风险从低到高评估：交互搜索与选择 UI、表格输出和终端颜色通常最容易与 Get Oudio 解耦；MV 下载、Widevine/protobuf、`mp4decrypt`、歌词、MP4 tag、封面写入、`alacfix` 和 runv2/runv3/runv4 解密路径必须先确认 Get Oudio 产品面是否真的不用，且要有替代测试或真实下载验证。尤其不要破坏 `--aac`、`--atmos`、`--song`、默认 ALAC、`config.yaml` 字段、进度输出和失败信息格式，因为 Get Oudio 会解析这些行为并向用户展示。
 
 ## Build And Sync
 
@@ -66,11 +74,11 @@ xcodebuild -project GetOudio.xcodeproj -scheme GetOudioCoreTests -configuration 
 
 `go version -m` 应显示目标为 `darwin/arm64`、`CGO_ENABLED=0` 和 `-trimpath=true`；`otool -L` 不应出现 Homebrew 或其他第三方动态库。Get Oudio 核心测试重点关注 `AppleMusicDownloadFormat`、`AppleMusicDownloadService.downloaderArguments`、Apple Music 进度解析、runtime 状态和 wrapper 初始化相关测试。若沙箱内 XCTest 因 `com.apple.testmanagerd.control` 被拒绝而失败，按同一命令在非沙箱环境重跑后再判断代码是否真的失败。
 
-真实功能验证应至少覆盖 ALAC 默认下载、`--aac`、`--atmos`、单曲 URL `--song`、专辑/播放列表 URL 不加 `--song`、wrapper 已登录和未登录两类错误路径、下载中断后的失败信息。涉及歌词、tag、封面、MV 或 Widevine 的裁剪时，还必须用对应真实内容验证输出文件、元数据和失败提示。
+真实功能验证应至少覆盖 ALAC 默认下载、`--aac`、`--atmos`、单曲 URL `--song`、专辑/播放列表 URL 不加 `--song`、wrapper 已登录和未登录两类错误路径、下载中断后的失败信息。启用模板解密时，还须验证 40020 readiness、默认 ALAC 的完整输出和 tag，以及 Runtime、wrapper 或内嵌下载器任一组件变更后的已登录真实下载。涉及歌词、tag、封面、MV 或 Widevine 的裁剪时，还必须用对应真实内容验证输出文件、元数据和失败提示。
 
 ## Upstream Sync
 
-保留两个远端：`origin` 指向 `https://github.com/memomoonnnn/apple-music-downloader`，`upstream` 指向 `https://github.com/zhaarey/apple-music-downloader`。同步上游时先运行 `git fetch upstream`，再按当前分支策略选择 merge 或 rebase；冲突解决要优先保留 Get Oudio 专用构建入口、本文档和兼容契约。上游变更如果影响 `go.mod`、`main.go`、`utils/runv2`、`utils/runv3`、`config.yaml.example` 或输出格式，同步后必须重新运行 Build And Sync 与 Verification 中的检查。
+保留两个远端：`origin` 指向 `https://github.com/memomoonnnn/apple-music-downloader`，`upstream` 指向 `https://github.com/zhaarey/apple-music-downloader`。同步上游时先运行 `git fetch upstream`，再按当前分支策略选择 merge 或 rebase；冲突解决要优先保留 Get Oudio 专用构建入口、本文档和兼容契约。上游变更如果影响 `go.mod`、`main.go`、`utils/runv2`、`utils/runv3`、`utils/runv4`、`config.yaml.example` 或输出格式，同步后必须重新运行 Build And Sync 与 Verification 中的检查。
 
 ## Security And Logging
 
