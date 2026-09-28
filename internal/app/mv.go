@@ -21,7 +21,7 @@ func (r *Runner) mvDownloader(adamID string, saveDir string, token string, store
 	MVInfo, err := ampapi.GetMusicVideoResp(storefront, adamID, r.Config.Language, token)
 	if err != nil {
 		fmt.Println("\u26A0 Failed to get MV manifest:", err)
-		return nil
+		return err
 	}
 	if len(MVInfo.Data) == 0 {
 		return errors.New("music video response contains no data")
@@ -62,6 +62,9 @@ func (r *Runner) mvDownloader(adamID string, saveDir string, token string, store
 			Album:    mvAlbumName,
 			Song:     mvName,
 		})
+		if track != nil {
+			track.SavePath = mvOutPath
+		}
 		return nil
 	}
 
@@ -147,6 +150,9 @@ func (r *Runner) mvDownloader(adamID string, saveDir string, token string, store
 		Album:    mvAlbumName,
 		Song:     mvName,
 	})
+	if track != nil {
+		track.SavePath = mvOutPath
+	}
 
 	return nil
 }

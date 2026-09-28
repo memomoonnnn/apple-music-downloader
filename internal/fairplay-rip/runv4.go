@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -31,10 +32,20 @@ var ErrTimeout = errors.New("response timed out")
 // lib is the loaded Temari cdylib handle, set by Init.
 var lib *temarimod.Library
 
-// Init loads the Temari decryption library bundled with the module.
+// Init loads the library beside the packaged executable, falling back to the
+// module copy for standalone development.
 func Init() error {
 	var err error
-	lib, err = temarimod.LoadDefault()
+	if executable, pathErr := os.Executable(); pathErr == nil {
+		path := filepath.Join(filepath.Dir(executable), "libtemari.dylib")
+		if _, statErr := os.Stat(path); statErr == nil {
+			lib, err = temarimod.Load(path)
+		} else {
+			lib, err = temarimod.LoadDefault()
+		}
+	} else {
+		lib, err = temarimod.LoadDefault()
+	}
 	if err != nil {
 		return fmt.Errorf("runv4: load temari library: %w", err)
 	}
@@ -91,7 +102,7 @@ type decryptResult struct {
 
 // Run streams fragmented MP4 and decrypts on the fly: HTTP body is fed directly
 // through a fragment-reader -> decrypt-workers -> in-order-writer pipeline.
-func Run(adamId string, playlistUrl string, outfile string, Config config.ConfigSet) error {
+func Run(adamId string, playlistUrl string, outfile string, Config config.ConfigSet, progress func(int64, int64)) error {
 	if lib == nil {
 		return errors.New("runv4: temari library not initialized (call runv4.Init)")
 	}
@@ -154,7 +165,7 @@ func Run(adamId string, playlistUrl string, outfile string, Config config.Config
 		body:      do.Body,
 	}
 
-	err = downloadAndDecryptFile(Config.LiteServer, body, outfile, adamId, segments, totalLen, Config)
+	err = downloadAndDecryptFile(Config.LiteServer, body, outfile, adamId, segments, totalLen, Config, progress)
 	timer.Stop()
 	if err != nil {
 		return err
@@ -164,7 +175,7 @@ func Run(adamId string, playlistUrl string, outfile string, Config config.Config
 }
 
 func downloadAndDecryptFile(liteServer string, in io.Reader, outfile string,
-	adamId string, playlistSegments []*m3u8.MediaSegment, totalLen int64, Config config.ConfigSet) error {
+	adamId string, playlistSegments []*m3u8.MediaSegment, totalLen int64, Config config.ConfigSet, progress func(int64, int64)) error {
 	var buffer bytes.Buffer
 	var outBuf *bufio.Writer
 	var outFile *os.File
@@ -219,7 +230,7 @@ func downloadAndDecryptFile(liteServer string, in io.Reader, outfile string,
 		return err
 	}
 
-	bar := progressbar.NewOptions64(totalLen,
+	barOptions := []progressbar.Option{
 		progressbar.OptionSetElapsedTime(false),
 		progressbar.OptionSetPredictTime(false),
 		progressbar.OptionShowElapsedTimeOnFinish(),
@@ -234,8 +245,16 @@ func downloadAndDecryptFile(liteServer string, in io.Reader, outfile string,
 			BarStart:      "",
 			BarEnd:        "",
 		}),
-	)
+	}
+	if progress != nil {
+		barOptions = append(barOptions, progressbar.OptionSetWriter(io.Discard))
+	}
+	bar := progressbar.NewOptions64(totalLen, barOptions...)
 	bar.Add64(int64(offset))
+	completed := int64(offset)
+	if progress != nil {
+		progress(completed, totalLen)
+	}
 
 	eg, ctx := errgroup.WithContext(context.Background())
 
@@ -260,6 +279,10 @@ func downloadAndDecryptFile(liteServer string, in io.Reader, outfile string,
 							return fmt.Errorf("encode fragment seq %d failed: %w", expectedSeq, err)
 						}
 						bar.Add64(readyRes.RawOffset)
+						if progress != nil {
+							completed += readyRes.RawOffset
+							progress(completed, totalLen)
+						}
 						delete(buffer, expectedSeq)
 						expectedSeq++
 					} else {

@@ -1,7 +1,11 @@
 package main
 
-import "amdl/internal/app"
+import (
+	"os"
+
+	"amdl/internal/app"
+)
 
 func main() {
-	app.Main()
+	os.Exit(app.Run())
 }

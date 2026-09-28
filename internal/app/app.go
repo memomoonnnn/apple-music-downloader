@@ -2,6 +2,7 @@ package app
 
 import (
 	"amdl/internal/config"
+	"amdl/internal/events"
 	"os"
 	"regexp"
 )
@@ -36,6 +37,7 @@ type Runner struct {
 	Config config.ConfigSet
 	Flags  Flags
 	State  State
+	Events *events.Emitter
 }
 
 func NewRunner(cfg config.ConfigSet) *Runner {

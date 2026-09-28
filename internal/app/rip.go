@@ -2,6 +2,7 @@ package app
 
 import (
 	"amdl/internal/amp-api"
+	"amdl/internal/events"
 	fairplayrip "amdl/internal/fairplay-rip"
 	"amdl/internal/media/alacfix"
 	defrag "amdl/internal/media/defrag"
@@ -18,6 +19,35 @@ import (
 
 func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken string) {
 	var err error
+	if r.Events != nil {
+		content := events.Content{
+			ID: track.ID, Kind: track.Type, Title: track.Resp.Attributes.Name,
+			Artist: track.Resp.Attributes.ArtistName, Album: track.Resp.Attributes.AlbumName,
+			Position: track.TaskNum, Total: track.TaskTotal,
+		}
+		if track.PreType == "playlists" {
+			content.PlaylistTitle = track.PlaylistData.Attributes.Name
+		}
+		r.Events.Emit("item_started", track.ID, map[string]any{"content": content})
+		beforeSuccess := r.State.Counter.Success
+		beforeWarnings := r.State.Counter.Unavailable + r.State.Counter.NotSong
+		defer func() {
+			r.Events.EndProgress()
+			if r.State.Counter.Success > beforeSuccess {
+				r.Events.Emit("item_completed", track.ID, map[string]any{"output_path": track.SavePath})
+				return
+			}
+			code := "download_failed"
+			if r.State.Counter.Unavailable+r.State.Counter.NotSong > beforeWarnings {
+				code = "unavailable"
+			}
+			message := "Track download failed"
+			if err != nil {
+				message = events.Redact(err.Error())
+			}
+			r.Events.Emit("item_failed", track.ID, map[string]any{"code": code, "message": message})
+		}()
+	}
 	r.State.Counter.Total++
 	fmt.Printf("Track %d of %d: %s\n", track.TaskNum, track.TaskTotal, track.Type)
 
@@ -25,10 +55,10 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 	if track.Type == "music-videos" {
 		if r.Config.LiteServer == "" {
 			fmt.Println("lite-server is not set, skip MV dl")
-			r.State.Counter.Success++
+			r.State.Counter.Error++
 			return
 		}
-		err := r.mvDownloader(track.ID, track.SaveDir, token, track.Storefront, track)
+		err = r.mvDownloader(track.ID, track.SaveDir, token, track.Storefront, track)
 		if err != nil {
 			fmt.Println("\u26A0 Failed to dl MV:", err)
 			r.State.Counter.Error++
@@ -116,6 +146,7 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 	filename := fmt.Sprintf("%s.m4a", forbiddenNames.ReplaceAllString(songName, "_"))
 	track.SaveName = filename
 	trackPath := filepath.Join(track.SaveDir, track.SaveName)
+	track.SavePath = trackPath
 	lrcFilename := fmt.Sprintf("%s.%s", forbiddenNames.ReplaceAllString(songName, "_"), r.Config.LrcFormat)
 
 	// Determine possible post-conversion target file (so we can skip re-download)
@@ -156,6 +187,7 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 		if err2 == nil && existsConverted {
 			fmt.Println("Converted track already exists locally.")
 			r.State.Counter.Success++
+			track.SavePath = convertedPath
 			r.State.OKDict[track.PreID] = append(r.State.OKDict[track.PreID], track.TaskNum)
 
 			tArtistId := ""
@@ -202,12 +234,15 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 	}
 
 	if needDlAacLc {
+		if r.Events != nil {
+			r.Events.BeginProgress("downloading", 0)
+		}
 		if r.Config.LiteServer == "" {
 			fmt.Println("aac-lc download requires lite-server, but it is not configured")
 			r.State.Counter.Error++
 			return
 		}
-		_, err := runv5.Run(track.ID, trackPath, token, false, r.Config.LiteServer)
+		_, err = runv5.Run(track.ID, trackPath, token, false, r.Config.LiteServer)
 		if err != nil {
 			fmt.Println("Failed to dl aac-lc via lite-server:", err)
 			if err.Error() == "Unavailable" {
@@ -218,7 +253,8 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 			return
 		}
 	} else {
-		trackM3u8Url, _, err := r.extractMedia(track.M3u8, false)
+		var trackM3u8Url string
+		trackM3u8Url, _, err = r.extractMedia(track.M3u8, false)
 		if err != nil {
 			fmt.Println("\u26A0 Failed to extract info from manifest:", err)
 			r.State.Counter.Unavailable++
@@ -226,13 +262,22 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 		}
 		//边下载边解密
 		//wrapper-lite 模板解密
-		err = fairplayrip.Run(track.ID, trackM3u8Url, trackPath, r.Config)
+		var onProgress func(int64, int64)
+		if r.Events != nil {
+			onProgress = func(completed, total int64) {
+				r.Events.SetProgress("downloading", completed, total)
+			}
+		}
+		err = fairplayrip.Run(track.ID, trackM3u8Url, trackPath, r.Config, onProgress)
 		if err != nil {
 			fmt.Println("Failed to run v4:", err)
 			r.State.Counter.Error++
 			return
 		}
 
+	}
+	if r.Events != nil {
+		r.Events.BeginProgress("tagging", 0)
 	}
 	// 将 fMP4 解碎片为普通 MP4；元数据和封面统一交给后续 writeMP4Tags 写入。
 	removeCoverAfterWrite := false
@@ -247,7 +292,8 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 		}
 	}
 
-	if err := defrag.DefragmentMP4(trackPath); err != nil {
+	err = defrag.DefragmentMP4(trackPath)
+	if err != nil {
 		fmt.Printf("Defragment failed: %v\n", err)
 		r.State.Counter.Error++
 		return
@@ -270,7 +316,8 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 		return
 	}
 	if removeCoverAfterWrite {
-		if err := os.Remove(track.CoverPath); err != nil {
+		err = os.Remove(track.CoverPath)
+		if err != nil {
 			fmt.Printf("Error deleting file: %s\n", track.CoverPath)
 			r.State.Counter.Error++
 			return
@@ -718,7 +765,7 @@ func (r *Runner) ripAlbum(albumId string, token string, storefront string, media
 				return nil
 			}
 		}
-		return nil
+		return fmt.Errorf("song %s not found in album %s", urlArg_i, albumId)
 	}
 	var selected []int
 	if !r.Flags.Select {
